@@ -33,6 +33,11 @@ El trabajo integra problemas de **regresión** y **clasificación**, desde la ex
 
 Proyecto en desarrollo. El repositorio se actualizará a medida que se completen las distintas etapas del análisis y modelado.
 
-## Autor
+## Autores
 
-Marcos Devincenzi — Ingeniería en Inteligencia Artificial y Ciencia de Datos, Universidad Católica del Uruguay.
+- Marcos Devincenzi
+- Facundo Díaz
+- Santiago Alba
+- Domingo Leiva
+
+Estudiantes de Ingeniería en Inteligencia Artificial y Ciencia de Datos en la Universidad Católica del Uruguay.
