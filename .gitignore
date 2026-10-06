@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.ipython/
+.jupyter/
+.matplotlib/
+data/solicitudes_reclamos_operativos_2024.csv
+data/union_inspeccion.csv
+qa/
