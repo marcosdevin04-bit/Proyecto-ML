@@ -1,0 +1,5 @@
+data/*.csv -text
+data/*.json -text
+*.ipynb -text
+*.pdf -text
+*.zip -text
