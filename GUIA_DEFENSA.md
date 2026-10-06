@@ -1,179 +1,200 @@
 # Guía para defender el proyecto de OSE
 
-Esta guía explica la implementación y sus resultados reales. Se apoya en `entrega_reclamos_ose.ipynb` y los CSV de `resultados/`. No sustituye comprender el código: cualquier integrante puede ser consultado sobre cualquier sección. Las cifras de CV son sobre desarrollo; las de test se identifican explícitamente.
+Esta guía resume qué hicimos en cada sección, por qué, y con qué números lo sostenemos. Todas las cifras salen de las salidas de `entrega_reclamos_ose.ipynb`. No reemplaza entender el código: en la defensa le pueden preguntar a cualquiera de los cuatro por cualquier celda.
+
+Las cifras de validación cruzada son sobre los 2.883 reclamos de desarrollo y se informan como media ± desvío entre folds. Las de la prueba reservada (721 reclamos) se marcan como «prueba».
 
 ## Presentación de un minuto
 
-> Buscamos apoyar una decisión al ingresar un reclamo: estimar su tiempo de resolución y su riesgo de superar 72 horas. Unimos los datos reales de OSE con el complemento didáctico y auditamos la calidad antes de modelar. Excluimos datos que solo se conocen al cierre para evitar fuga de información. Comparamos los modelos pedidos con referencias simples, usando pipelines y validación cruzada. La predicción de horas mejora poco y tiene mucha variabilidad; la clasificación distingue riesgos mejor que la prevalencia. Como dejar pasar un incumplimiento cuesta seis veces más que priorizar innecesariamente, derivamos un umbral del 14,3%. En el test reservado, esa política detectó 92 de 116 incumplimientos y tuvo un costo de USD 22,84 por reclamo bajo los costos del ejercicio. No presentamos esa proyección como ahorro real demostrado en OSE.
+> Cuando entra un reclamo, OSE tiene que decidir si manda una cuadrilla prioritaria. Unimos los datos abiertos de 2024 con el complemento de la cátedra y auditamos la tabla antes de modelar: había tiempos negativos, distancias cargadas en metros y reclamos copiados. Usamos solo lo que se sabe al ingresar el reclamo; si metiéramos datos del cierre, el AUC pasaría de 0,77 a 0,97 y sería mentira. Para estimar el tiempo de resolución, los modelos lineales mejoran poco sobre predecir la media, porque unos pocos reclamos de meses dominan el error. Para priorizar, la regresión logística ordena bien el riesgo (AUC 0,77), y el umbral lo sacamos de los costos: como dejar pasar un incumplimiento cuesta seis veces más que mandar una cuadrilla de más, conviene priorizar desde un 14,3 % de probabilidad. En la prueba reservada eso detecta 92 de 116 incumplimientos y cuesta USD 22,91 por reclamo, contra USD 43,44 sin priorizar: unos USD 8 millones al año. Es una proyección con los supuestos del ejercicio, no un ahorro demostrado.
 
-## 1. Datos, unión y calidad: qué hicimos y por qué
+## Cómo está armado el código
 
-**Procedimiento:** leímos 390.886 filas de OSE, filtramos por los 3.964 identificadores del complemento y unimos uno a uno. Las claves son únicas y todos los identificadores encuentran correspondencia. El metadato confirma que el tiempo está en minutos, que -1 significa ausencia y que 1900 en fechas es un centinela. Convertimos minutos a horas y etiquetamos incumplimiento solo después de verificar la validez del tiempo.
+Conviene que los cuatro puedan explicar estas cuatro piezas, porque se usan en todo el notebook:
 
-**Justificación:** una unión puede correr y ser incorrecta. Si una clave aparece repetida en ambas tablas, puede multiplicar filas y dar más peso a ciertos reclamos. Por eso usamos `validate='one_to_one'`, comprobamos cobertura y mostramos conteos.
+- **`flujo(modelo, escalar=True)`** arma el `Pipeline`: primero el `ColumnTransformer` (mediana + indicador de ausencia + escalado para las numéricas; «sin dato» + one-hot para las categóricas) y después el modelo. Es el mismo esquema del lab 4.
+- **`validar_regresion` y `validar_clasificacion`** hacen la validación cruzada a mano, como el bucle del lab 4. En cada fold entrenan el pipeline completo con cuatro partes y miden en la quinta. Devuelven las métricas de cada fold y la predicción de cada reclamo hecha por un modelo que no lo vio (lo que se usa después para los costos).
+- **`cv_reg` y `cv_clas`** son los folds: `KFold` y `StratifiedKFold`, 5 particiones, semilla 42. Se crean una vez y todos los modelos usan los mismos.
+- **`costo_por_reclamo(y, priorizar)`** cuenta falsos positivos y falsos negativos y devuelve `(45·FP + 270·FN) / n`.
 
-**Hallazgos y decisiones:**
+## 1. Datos, unión y auditoría
 
-- 331 tiempos negativos: excluidos de las dos tareas. No tomamos valor absoluto ni los convertimos en cero: inventaría el resultado. Tampoco imputamos el objetivo con la media. El cierre en sistema puede ser posterior a la resolución real, así que no sustituimos un objetivo por el otro.
-- 32 copias exactas salvo ambos identificadores: quitamos una copia antes de dividir. La coincidencia de todo el registro y el complemento es evidencia de posible duplicación; no es prueba absoluta de que fueran el mismo incidente. Reclamos reales simultáneos pueden coincidir, y lo reconocemos.
-- Hay 3 filas que son a la vez copias excluidas y tienen tiempo negativo. Por eso el total final es **3.964 − 32 − 331 + 3 = 3.604**, no 3.601. Los defectos pueden superponerse.
-- 21 distancias fuera de [0, 1.000] km: invalidamos el valor y mantenemos el reclamo. Valores de miles de kilómetros no son plausibles para una cuadrilla local. Dividir por 1.000 podría corregir metros anotados como kilómetros, pero no está confirmado: descartamos esa corrección automática. El corte es una decisión de plausibilidad del trabajo, no un umbral oficial de OSE.
-- Los tres tiempos cero y distancias de 400 km se conservan. Un extremo no es automáticamente un error. Tiempo cero puede reflejar resolución inmediata a precisión de minutos; no hay evidencia suficiente para asignar otra demora.
-- Faltan 255 valores de conexiones y 464 de encuesta en la tabla unida original; además aparecen ausencias codificadas como centinelas. No alcanza con `isna()` sobre el archivo crudo.
+**Unión.** 390.886 filas de OSE, 3.964 del complemento, 3.964 después de filtrar y 3.964 después de unir. Lo garantizan los identificadores únicos en las dos tablas, `validate="one_to_one"` en el `merge` y los `assert` del final.
 
-**Mecanismos de faltantes:** MCAR significa independencia del resto del registro, MAR dependencia de información observada y MNAR dependencia del valor no observado. No asignamos mecanismos por intuición. Usamos indicadores de ausencia y contrastes con variables observadas. En conexiones, la mediana de demora pasa de 18,31 h con dato a 21,02 h sin dato (p≈0,0074, efecto de rangos pequeño). En encuesta pasa de 17,12 h a 49,80 h (p≈2,7×10⁻³⁷). Hay evidencia exploratoria contra independencia, pero **no podemos distinguir definitivamente MAR y MNAR**. La demora se utiliza para auditar el histórico, nunca como entrada honesta. Los p son exploratorios y hay múltiples contrastes; no establecen causa.
+**Defectos que encontramos y qué hicimos:**
 
-Si preguntan «¿por qué no eliminar todas las filas con faltantes?»: perderíamos reclamos, y la ausencia puede estar asociada con el proceso. Imputar conserva casos, pero tampoco elimina automáticamente el sesgo. El objetivo es distinto de una entrada: sin una respuesta válida no podemos entrenar ni evaluar ese reclamo.
+- **331 tiempos negativos** (10 con el código −1 de «sin dato» y 321 imposibles). Los excluimos porque no se puede saber si cumplieron el plazo. No los pasamos a cero ni los imputamos: eso es inventar la respuesta. Ojo: 291 de los 321 están entre −24 h y 0, y esto es lo que discutimos en la autocrítica.
+- **21 distancias mayores a 1000 km** (máximo 87.510). Las dividimos por 1000. La prueba de que estaban en metros es que, divididas, quedan en el rango de su departamento: las de Montevideo entre 2,5 y 8,7 km, con mediana departamental 7,0.
+- **32 reclamos copiados** (idénticos salvo el identificador). Se quitan antes de particionar para que una copia no quede en entrenamiento y la otra en validación.
+- **Códigos de «sin dato»** que los metadatos documentan: fechas 1900, centro técnico −1, «SIN DATOS». Se pasan a faltante.
+- **Cola larga del tiempo**: asimetría 16,5, media 66,6 h y mediana 18,7 h.
 
-## 2. Preparación: qué aprende cada paso
+Las cuentas no suman directo (3.964 − 32 − 331 = 3.601) porque 3 reclamos son a la vez copia y tiempo negativo. Por eso quedan **3.604 válidos**.
 
-**Numéricas:** distancia, conexiones y hora. Mediana con indicadores de ausencia; luego StandardScaler. La mediana resiste la cola de conexiones y distancias corruptas mejor que la media como criterio de reconstrucción simple. Comparamos media y mediana en los mismos folds; no declaramos que mediana gana siempre por una frase de buena práctica.
+**Faltantes.** MCAR: la ausencia no depende de nada. MAR: depende de algo que sí vemos. MNAR: depende del valor que falta. Hicimos lo del lab 11: chi-cuadrado contra categóricas y test t contra numéricas.
 
-**Categóricas:** departamento, tipo, complejidad, agua, presión, inundación, mes y día. One-hot evita darles un orden artificial. Mes y día son categorías porque diciembre no implica necesariamente doce veces el efecto de enero. El encoder omite una categoría de referencia y admite categorías desconocidas. Una categoría desconocida queda con todas las dummies en cero, como la referencia: eso es un límite, no una garantía de generalización.
+- **Conexiones** (255 faltantes): la ausencia se asocia con el tipo de reclamo (p = 0,001) y con la demora (p = 0,010), así que no es MCAR. Entre MAR y MNAR no se puede decidir sin conocer el valor que falta. Imputamos con la mediana (no la media, porque la media es 44 y la mediana 27 por la cola) y agregamos el indicador de ausencia.
+- **Calificación** (464): cuando falta, la demora mediana es 49,7 h contra 17,3 h. Quien esperó mucho no contesta. MNAR plausible. Igual se excluye porque la encuesta es posterior al cierre.
+- **Centro técnico y orden** (319): faltan en las mismas filas; son reclamos cerrados sin orden de trabajo.
 
-**Pipeline y ColumnTransformer:** ColumnTransformer dirige cada tipo de variable a su preparación; Pipeline encadena preparación y modelo. Las medianas, escalas y categorías se aprenden solo del entrenamiento de cada fold. Preparar toda la tabla antes de CV filtraría información de validación.
+## 2. Preparación
 
-**Disponibilidad temporal:** excluimos tiempo, fechas de resolución, centro que atendió, orden final, resultado de cierre y encuesta. Aunque mejoraran las métricas, no existen al ingresar. Excluimos además identificadores porque no son atributos generalizables; año porque es constante; región por redundancia observada con departamento. Son motivos diferentes y se justifican columna por columna en el notebook.
+Entran 11 columnas conocidas al ingresar: distancia, conexiones y hora (numéricas); departamento, tipo, complejidad, ausencia de agua, baja presión, inundación, mes y día (categóricas). Mes y día van como categorías porque diciembre no es «doce veces» enero.
 
-## 3. Referencias: qué significa aportar valor
+Las exclusiones tienen tres motivos distintos, y conviene no mezclarlos:
 
-La base de regresión predice la media del entrenamiento de cada fold. Tiene MAE de CV 82.89 h y RMSE 279.32 h. La base clasificadora devuelve prevalencia constante: AUC 0,5 y AP aproximadamente 0,161.
+- **Es la respuesta o la contiene:** el tiempo y las fechas de resolución (resuelto menos ingreso da el tiempo).
+- **Disponibilidad:** centro técnico, estado, tipo y grupo de orden, encuesta. Se conocen al cerrar.
+- **Otros:** región (redundante con departamento), año (constante), identificador.
 
-La proporción de incumplimiento es **16.09%**. Si predigo siempre «no incumple», obtengo aproximadamente 84% de accuracy y **recall cero**. Por eso accuracy sola no prueba utilidad. La prevalencia como probabilidad base también permite evaluar Brier; no es únicamente una etiqueta de mayoría.
+Ninguna se excluyó por desempeño. Lo que va antes del pipeline son reglas fijas (unidades, códigos, copias, etiqueta); lo que aprende de los datos (mediana, escala, categorías) va adentro y se reajusta en cada fold.
 
-## 4. Regresión lineal y distribución del objetivo
+## 3. Líneas base
 
-Mínimos cuadrados minimiza errores cuadrados y busca una relación aditiva entre entradas y tiempo. Interpretamos coeficientes después de volver a las unidades originales: en este ajuste, un km adicional se asocia con **1,048 h** más y una conexión adicional con **0,279 h** más, manteniendo las otras entradas. No significa que aumentar físicamente distancia o conexiones cause exactamente esa demora.
+- **Regresión:** predecir siempre la media. MAE 82,89 ± 5,98 h y RMSE 279,32 ± 85,87 h. El RMSE va de 209 h a 409 h según el fold: depende de qué reclamos extremos le tocan.
+- **Clasificación:** probabilidad constante igual a la prevalencia. AUC 0,500 y AP 0,161. A umbral 0,5 nunca prioriza y aun así tiene 83,9 % de accuracy; por eso no la usamos.
 
-La respuesta tiene cola derecha. Comparamos tiempo directo con `log1p` y evaluamos ambos otra vez en horas. El log baja MAE de 90,32 a 58,83 h, pero eleva RMSE de 275,36 a 282,21 h. Elegimos directo para planificación de carga y prioridad a RMSE. **Si el objetivo fuera el error del caso típico, la alternativa log merecería otra elección.** No afirmamos que directo gane en todas las métricas. Invertir un ajuste log con `expm1` tampoco recupera automáticamente una media condicional en horas.
+Todo lo que viene después se compara contra estas dos.
 
-MAE es promedio del error absoluto; RMSE penaliza mucho más errores grandes. R² mide variación explicada y puede ser negativo. Una mejora en RMSE con MAE peor indica un compromiso entre cola y caso típico, no un error del cálculo. No truncamos las predicciones negativas para mejorar las métricas: las mostramos como límite del modelo.
+## 4. Regresión lineal
+
+**Horas o logaritmo.** En log el MAE baja de 89,66 a 58,84 h pero el RMSE sube de 274,49 a 282,51 h. Elegimos horas porque el uso es planificar carga, que es una suma de horas. El modelo en log, al volver a horas, predice cerca de la mediana: en desarrollo suma 63.553 h cuando las reales son 192.041 h (subestima un 67 %). El de horas suma 193.496 h.
+
+**Coeficientes, en unidades del caso:** cada km más suma 1,1 h y cada conexión más 0,28 h, con todo lo demás fijo. Montevideo suma 104 h frente a Artigas; reposición y señalización, 302 h frente a calidad del agua. Son asociaciones, no causas.
+
+**Contra la base:** el RMSE baja 4,8 h y el MAE sube 6,8 h, con un desvío entre folds de 85 h. Además, 449 de 2.883 predicciones son negativas. Sirve para carga total, no para el plazo de cada reclamo.
 
 ## 5. Ridge y Lasso
 
-**Ridge** penaliza cuadrados de coeficientes y los reduce. **Lasso** penaliza valores absolutos y puede dejar ceros. El escalado evita que penalizar dependa arbitrariamente de unidades numéricas. Se mantiene la preparación entre mínimos cuadrados, Ridge y Lasso.
+Ridge achica los coeficientes; Lasso puede dejarlos en cero. λ se elige por validación cruzada con una grilla logarítmica de 25 valores entre 0,001 y 100.000. Ridge eligió **46,4** y Lasso **2,15**, los dos dentro de la grilla (si caían en un borde había que ampliarla).
 
-Alpha se eligió por CV, con grillas logarítmicas, no a mano. Ridge eligió **51.7947** y Lasso **1.0000**; ambos quedaron dentro de la grilla. Sus normalizaciones de función objetivo son diferentes: esos alpha no se comparan como si midieran lo mismo.
+| Modelo | MAE (h) | RMSE (h) |
+|---|---|---|
+| Base | 82,89 | 279,32 |
+| Mínimos cuadrados | 89,66 | 274,49 |
+| Ridge | 84,01 | 272,90 |
+| Lasso | 80,22 | 272,62 |
 
-En CV: RMSE lineal 275,36 h; Ridge 273,80 h; Lasso 273,57 h; base 279,32 h. La dispersión entre folds ronda 85–87 h. La mejora existe, pero es pequeña y no alcanza para presentar una predicción precisa de demoras. En MAE de CV ninguno de los tres mejora la base. Penalizar controla flexibilidad, no inventa la información que falta al ingreso ni elimina la cola larga.
+**Qué anula Lasso (43 de 54):** la hora, todos los días y 9 de 11 meses; 15 de 18 departamentos (quedan Montevideo y Canelones); casi todos los tipos (queda reposición y señalización). Conserva distancia, conexiones, el indicador de conexiones faltantes y la ausencia de agua.
 
-Lasso anula **27 de 55 coeficientes** codificados, incluida hora, varias categorías de departamento, algunos tipos, complejidades, meses y una categoría de día. Un cero en una dummy significa que no añade desplazamiento sobre la referencia en este ajuste penalizado; no demuestra que el departamento o el tipo sean causalmente irrelevantes. La lista completa está en el notebook y `resumen.json`.
+**¿Aporta la penalización?** Para predecir, no: Lasso baja el RMSE en 1,86 ± 3,39 h por fold, menos que su propio desvío. La regularización sirve cuando hay pocos datos por coeficiente, y acá hay 53. El error lo domina la cola. Lo que sí aporta Lasso es simplicidad: 11 coeficientes en vez de 54 con el mismo error.
 
-## 6. Logística: probabilidad y decisión son cosas distintas
+## 6. Regresión logística
 
-La logística convierte una combinación de entradas en probabilidad de incumplimiento entre 0 y 1. Usamos regularización L2 por defecto (`C=1`), sin buscar ese hiperparámetro. Conservamos clases naturales, sin SMOTE ni ponderación; no queremos introducir descalibración por cambiar prevalencias antes de aplicar el umbral económico.
+Da una probabilidad de incumplir. No ponderamos ni remuestreamos clases, para que las probabilidades se puedan usar directo con el umbral de costos.
 
-En CV obtiene AUC **0.770 ± 0,027** y AP **0.401 ± 0,043**. A umbral 0,5 el recall es solo 9,7%: ordena riesgos razonablemente, pero ese umbral deja pasar muchos incumplimientos.
+AUC **0,771 ± 0,028** y AP **0,403 ± 0,044** (la base: 0,500 y 0,161). A umbral 0,5 la matriz es TN 2.385, FP 34, FN 419, TP 45: detecta 45 de 464. El modelo ordena bien; el que falla es el umbral 0,5, porque casi ningún reclamo pasa del 50 %.
 
-AUC evalúa ordenamiento, no significa «77% de aciertos». AP resume precisión-recall y se compara con prevalencia. Brier mide error de probabilidades. Recall cuantifica incumplimientos detectados y precision qué fracción de priorizados realmente incumplía. F1 equilibra precision y recall pero **no incorpora costos 45/270**. Para escoger política manda el costo.
+- **AUC:** qué tan bien ordena por riesgo. No es «77 % de aciertos».
+- **AP:** precisión y recall para la clase minoritaria; se compara con la prevalencia.
+- **La que manda es el costo,** porque los errores no cuestan lo mismo.
 
-## 7. Evaluación y por qué este orden
+## 7. Validación cruzada
 
-Después de limpieza fija, reservamos **721 reclamos** como test y usamos **2.883** para desarrollo. Elegimos cinco folds por equilibrio entre tamaño de entrenamiento, estabilidad y costo de ejecución. Semilla 42 permite reproducir particiones; no es un valor óptimo aprendido. Clasificación usa estratificación para conservar proporciones de clases; no convierte la muestra en 50/50.
+Cinco folds, estratificados en clasificación, los mismos para todos. La validación envuelve al pipeline completo. Antes de particionar hay que: quitar copias, excluir tiempos negativos y crear la etiqueta (sin etiqueta no se puede estratificar), convertir unidades y códigos, y decidir qué columnas existen al ingresar. Son reglas fijas, así que hacerlas antes no filtra información.
 
-Cada predicción OOF viene de un modelo que no entrenó con ese reclamo. Esas predicciones permiten matrices y costos de desarrollo sin medir sobre entrenamiento. Reportamos media y desvío por fold: el desvío es variación, no intervalo de confianza ni una prueba de significancia.
+## 8. Leakage
 
-Claves, copias, unidades, centinelas y etiqueta válida se resuelven antes de dividir. Imputación, escalado y categorías después, dentro de cada entrenamiento. Las CV de alpha y de evaluación usan los mismos folds: admitimos sesgo de selección y usamos test reservado para comprobar la elección. No hacemos CV anidada porque queda fuera del alcance.
+Mismo modelo, misma preparación, mismos folds; solo se agregan las columnas de cierre (encuesta, centro, estado, tipo y grupo de orden).
 
-## 8. Experimento de leakage
+| Flujo | AUC | AP |
+|---|---|---|
+| Honesto | 0,771 ± 0,028 | 0,403 ± 0,044 |
+| Contaminado | 0,974 ± 0,004 | 0,896 ± 0,012 |
+| Brecha | +0,202 ± 0,026 | +0,493 ± 0,042 |
 
-El honesto usa información de ingreso. El contaminado agrega futuro; conserva logística, reglas de preparación y folds. AUC pasa aproximadamente de **0,770 a 0,997**, una brecha de **0.227 ± 0,027**. El futuro mejora artificialmente la validación, aunque cada fila esté fuera de su entrenamiento.
+Esa brecha es lo que el modelo aparentaría en validación y no tendría en producción, porque al ingresar esas columnas están vacías. El tiempo y las fechas no se agregan porque son la respuesta: con ellos el AUC llega a 0,997 y no mide nada interesante.
 
-Incluimos tiempo de resolución, que determina la etiqueta: es fuga directa. Por eso la brecha mide el conjunto de columnas futuras, no cuánto aporta por sí sola la encuesta. Nunca metemos `incumple_72h` como entrada ni usamos el contaminado para recomendar una política.
+Si preguntan «¿la validación cruzada no evita el leakage?»: no. Evita entrenar con la fila que se valida, pero no detecta que una columna traiga información del futuro.
 
-Respuesta a «si hago CV, ¿ya evito leakage?»: no. CV evita entrenar en la fila de validación; no corrige que las columnas revelen el resultado futuro.
+## 9. Umbral por costos
 
-## 9. Umbral económico y números que tenés que entender
+Priorizar cuesta en promedio 45·(1 − p); no priorizar, 270·p. Conviene priorizar cuando p > 45 / (45 + 270) = **1/7 ≈ 0,143**. Si los costos fueran iguales, el umbral sería 0,5.
 
-Si p es riesgo de incumplir, priorizar cuesta 45(1−p) en esperanza; no priorizar cuesta 270p. Igualando: 45−45p=270p, por lo que p=45/315=**1/7=14,29%**. Por arriba conviene priorizar. Con costos iguales sería 50%; acá dejar pasar cuesta seis veces más.
+En validación cruzada, con el umbral 0,143 se prioriza el 44 % y el costo es USD 23,65 ± 2,48 por reclamo. Con 0,5 es USD 39,77; priorizando todo, 37,76; sin priorizar, 43,45.
 
-**Test reservado, 721 reclamos:**
+**Prueba reservada (721 reclamos):**
 
-| Política | Falsos positivos | Falsos negativos | USD por reclamo | USD anuales proyectados |
+| Política | FP | FN | USD por reclamo | USD por año |
 |---|---:|---:|---:|---:|
-| Umbral 14,3% | 222 | 24 | 22,84 | 8.908.877 |
-| Umbral 50% | 6 | 102 | 38,57 | 15.042.857 |
+| Umbral 0,143 | 223 | 24 | 22,91 | 8.933.218 |
+| Umbral 0,5 | 6 | 102 | 38,57 | 15.042.857 |
 | Priorizar todos | 605 | 0 | 37,76 | 14.726.422 |
-| No priorizar ninguno | 0 | 116 | 43,44 | 16.941.470 |
+| No priorizar | 0 | 116 | 43,44 | 16.941.470 |
 
-Para el umbral económico: (222×45 + 24×270)/721 = **USD 22,84 por reclamo**. Multiplicamos por 390.000 para la proyección anual, cifra indicada por el caso; no por las 390.886 filas del archivo.
+La cuenta a mano: (223 × 45 + 24 × 270) / 721 = 16.515 / 721 = **USD 22,91**. Detecta 92 de 116 (79 %) y prioriza 315 reclamos (44 %), con una precisión de 92/315 = 29 %. Esa precisión baja se acepta porque el error contrario es seis veces más caro.
 
-Detecta **92/116 = 79,3%** de incumplimientos; prioriza **314/721 = 43,6%** de los reclamos; precisión **92/314 = 29,3%**. Esa baja precisión no invalida por sí sola la política: toleramos más falsas alarmas porque el error opuesto es más caro. Accuracy baja a 65,9%, aunque el costo mejora: cada métrica responde una pregunta distinta.
+## 10. Tres familias bajo el mismo defecto
 
-Frente a priorizar todos, la mejor política constante elegida en desarrollo, la proyección ahorra **USD 5,817,545 anuales**. Frente a 0,5 ahorra aproximadamente USD 6,13 millones. Son proyecciones bajo la matriz simplificada, representatividad y probabilidades útiles; **no ahorro real probado, no presupuesto completo y no causalidad**. Sin capacidad suficiente para priorizar 43,6%, habría que incorporar esa restricción a una decisión nueva.
+Lineal, k vecinos y árbol, con y sin escalado, y con la distancia en km o en metros. k y la profundidad se eligen por MAE (con RMSE el árbol se quedaba en profundidad 1, el borde de la grilla, por culpa de la cola). Ningún valor elegido quedó en un borde.
 
-## 10. Escalado y unidades: qué demuestra el experimento
+Cuánto se mueven las predicciones al cambiar una sola cosa:
 
-Probamos lineal, KNN y árbol con/sin escalado y distancia en km/m. Son 12 combinaciones, mismos datos, imputación, codificación y folds. Solo buscamos vecinos y profundidad.
+| Cambio | Lineal | k vecinos | Árbol |
+|---|---:|---:|---:|
+| Quitar el escalado | 0 h | 36,7 h | 0 h |
+| Pasar a metros, con escalado | 0 h | 0,003 h | 0 h |
+| Pasar a metros, sin escalar | 0,22 h | 17,3 h | 0 h |
 
-- **KNN:** usa distancias. Con escalado elige 101 vecinos y da RMSE 276,05 h en km y metros. Sin escalar, pasar a metros cambia el mejor k de 101 a 401. La primera grilla terminaba en 401; ampliamos hasta 803 y 1.605, y 401 quedó interior. Eso permite defender que no cortamos el barrido justo en el óptimo aparente.
-- **Árbol:** elige profundidad 1 por RMSE en las cuatro ramas y obtiene 275,82 h. Uno es límite físico inferior; no existe profundidad positiva menor. Escalar o convertir unidades preserva el orden y los cortes posibles. En esta ejecución sus predicciones coinciden.
-- **Lineal sin penalización:** predicciones prácticamente invariantes al escalado positivo; coeficientes compensan unidades. En metros sin escalado aparece una pequeña diferencia por condicionamiento numérico y empates/rango de matriz. Con escalado la diferencia máxima de predicciones por conversión es aproximadamente 1,5×10⁻¹² h.
+- **k vecinos** compara distancias entre reclamos, así que manda la variable con números más grandes. En metros, la distancia tapa todo lo demás. El k elegido salta de 81 a 151 y a 601. Escalar lo arregla.
+- **Lineal:** el coeficiente se ajusta a la unidad (1,1 h por km = 0,0011 h por metro).
+- **Árbol:** corta según el orden de los valores, y ese orden no cambia.
 
-No decimos «escalar siempre mejora todo». KNN cambia geometría; el árbol usa orden; mínimos cuadrados puede reparametrizar. El propósito es explicar sensibilidad, no elegir ganador.
+## 11. Reglas
 
-## 11. Reglas: quién puede aplicarlas y qué se pierde
+Árbol de profundidad 3 (hasta 8 reglas de 3 condiciones) y al menos 30 reclamos por hoja, fijados por legibilidad. Sin escalar, para leer los cortes en km y horas.
 
-El árbol de clasificación tiene profundidad 3, máximo ocho hojas, y mínimo 30 reclamos por hoja. Son valores fijados por legibilidad y soporte; no se buscaron por AUC. Usamos numéricas sin escalar para leer cortes en sus unidades.
+Las reglas que sirven: **con agua, en Montevideo y a más de 8,1 km** (388 reclamos, 47,7 % incumple, tres veces la prevalencia) y **con agua, en el interior, y entra un viernes** (184 reclamos, 32,6 %, probablemente porque cruza el fin de semana). Las de falta de agua casi nunca incumplen (0,4 % a 2,7 %). Dos hojas quedan a menos de 2 puntos de la prevalencia: son la media disfrazada.
 
-Su AUC de CV es **0.758**, frente a **0,770** de logística. Gana rapidez de lectura: hasta tres condiciones, aplicables por un supervisor con información de ingreso. Pierde flexibilidad, y las tasas por hoja dependen de los reclamos usados para construirlo. Las tasas de las reglas siguientes son de desarrollo, no una validación independiente de cada hoja.
+Contra la logística: AUC 0,757 contra 0,771, y USD 27,10 contra 23,65 por reclamo (unos USD 1,35 millones más al año). A cambio, el operador puede aplicar la regla en segundos, sin sistema, con datos que ya tiene.
 
-- Hoja 3: **situación de agua no es «CON AGUA» Y distancia desde el centro (km) ≤ 5.580 Y hora de ingreso ≤ 14.825**. 253 reclamos, incumple 0.4%; diferencia frente a prevalencia -15.7 puntos; acción económica: Cola normal.
-- Hoja 4: **situación de agua no es «CON AGUA» Y distancia desde el centro (km) ≤ 5.580 Y hora de ingreso > 14.825**. 60 reclamos, incumple 3.3%; diferencia frente a prevalencia -12.8 puntos; acción económica: Cola normal.
-- Hoja 6: **situación de agua no es «CON AGUA» Y distancia desde el centro (km) > 5.580 Y departamento no es «MONTEVIDEO»**. 547 reclamos, incumple 2.7%; diferencia frente a prevalencia -13.4 puntos; acción económica: Cola normal.
-- Hoja 7: **situación de agua no es «CON AGUA» Y distancia desde el centro (km) > 5.580 Y departamento es «MONTEVIDEO»**. 228 reclamos, incumple 11.4%; diferencia frente a prevalencia -4.7 puntos; acción económica: Cola normal.
-- Hoja 10: **situación de agua es «CON AGUA» Y departamento no es «MONTEVIDEO» Y día de semana (0=lunes, 6=domingo) no es «4»**. 887 reclamos, incumple 14.3%; diferencia frente a prevalencia -1.8 puntos; acción económica: Priorizar.
-- Hoja 11: **situación de agua es «CON AGUA» Y departamento no es «MONTEVIDEO» Y día de semana (0=lunes, 6=domingo) es «4»**. 184 reclamos, incumple 32.6%; diferencia frente a prevalencia +16.5 puntos; acción económica: Priorizar.
-- Hoja 13: **situación de agua es «CON AGUA» Y departamento es «MONTEVIDEO» Y distancia desde el centro (km) ≤ 8.085**. 334 reclamos, incumple 14.4%; diferencia frente a prevalencia -1.7 puntos; acción económica: Priorizar.
-- Hoja 14: **situación de agua es «CON AGUA» Y departamento es «MONTEVIDEO» Y distancia desde el centro (km) > 8.085**. 390 reclamos, incumple 47.4%; diferencia frente a prevalencia +31.3 puntos; acción económica: Priorizar.
+## 12. Autocrítica
 
-Las hojas 10 y 13 quedan cerca de la prevalencia general (16,1%): no son segmentaciones fuertes, aunque su tasa supere el umbral económico. La hoja 14, por ejemplo, tiene 390 casos y 47,4% de incumplimiento, casi tres veces la prevalencia; eso es un contraste operativo visible, pero depende de columnas didácticas y no diagnostica zonas de OSE.
-
-El dibujo del árbol muestra clase mayoritaria con umbral 0,5; por eso todas las hojas pueden decir «No incumple». La tabla de acciones usa 0,143 y sí prioriza algunas. No confundir etiqueta mayoritaria con política por costos. Para valores faltantes, se aplican medianas del entrenamiento publicadas en la sección; no se inventan datos manualmente.
-
-## 12. Autocrítica que se puede defender
-
-Elegimos una fragilidad concreta: **particiones aleatorias como aproximación a reclamos futuros independientes**. Diferentes reclamos pueden pertenecer a la misma rotura o corte y compartir resolución. Eliminar copias exactas no resuelve eso. Sin identificador de incidente no sabemos separar episodios.
-
-Si la hipótesis falla, AUC/AP y ahorro anual pueden estar sobreestimados. El test también es aleatorio: no corrige esa fragilidad. Proponemos conseguir agrupación por incidente/ubicación y validar un período posterior. Una caída confirmaría dependencia de esa decisión; estabilidad en episodios y meses nuevos la debilitaría. No decimos «puede haber overfitting» sin identificar qué decisión y qué números cambiarían.
+La decisión más frágil es **haber excluido los tiempos negativos** (sección 1). 291 de los 321 están entre −24 h y 0: probablemente son reclamos resueltos rápido y que cumplieron. Al sacarlos, la prevalencia sube de 14,79 % a 16,09 % y el modelo cree que el riesgo es mayor de lo que es. Cambiarían el AUC y el AP de la sección 7, los costos de la sección 9 y el ahorro de la sección 13. La corrección: etiquetarlos como «no incumple» en la clasificación, volver a correr, y ver si el costo cambia más que su desvío (USD 2,48).
 
 ## 13. Recomendación y límites
 
-Recomendamos estudiar logística honesta con umbral económico bajo los supuestos del ejercicio. El modelo de horas elegido en desarrollo es Lasso. En test tiene MAE **78.70 h** frente a 82,95 h de base, y RMSE **204.70 h** frente a 217,94 h. Son mejoras acotadas; la CV es muy variable por la cola. No presentamos eso como una estimación precisa por reclamo.
+**Recomendación:** logística con umbral 0,143. En la prueba: AUC 0,784, USD 22,91 por reclamo, ahorro de USD 20,53 por reclamo frente a no priorizar (unos USD 8,0 millones al año) y de USD 14,85 frente a priorizar todos (unos 5,8 millones). Para el tiempo, Lasso (prueba: MAE 76,57 h contra 82,95 de la base), solo para la carga total de cada centro.
 
-No podemos afirmar: que esas cifras representen exactamente a toda OSE; que las columnas didácticas describan su operación real; que los excluidos tengan igual riesgo; que MAR esté probado; que una cuadrilla reduzca causalmente tiempos como predice el histórico; que hay capacidad para todas las prioridades; ni que la proyección económica sea ahorro observado.
+**Lo que no se puede concluir:**
 
-## Preguntas rápidas para practicar
+- No es un diagnóstico de OSE: distancia, conexiones y calificación son didácticas.
+- El ahorro es una proyección: supone que priorizar evita el incumplimiento y que hay cuadrillas para el 44 % de los reclamos (unos 172.000 al año).
+- No sabemos nada de los reclamos excluidos.
+- Es un solo año, con particiones al azar: no sabemos cómo rinde en 2025.
+- Los coeficientes son asociaciones, no causas.
 
-**¿Qué es FP acá?** Priorizar un reclamo que no iba a superar 72 horas: USD 45. **¿FN?** No priorizar uno que sí iba a superarlas: USD 270.
+## Preguntas para practicar
 
-**¿Qué pasa exactamente a las 72 horas?** No incumple, porque el caso dice superar. **¿Y -1?** No es «cumple», es objetivo ausente o inválido y se excluye antes de etiquetar.
+**¿Qué es un falso positivo acá?** Priorizar un reclamo que no iba a superar las 72 h: USD 45. **¿Y un falso negativo?** No priorizar uno que sí las supera: USD 270.
 
-**¿Por qué no usar satisfacción, si predice bien?** Se conoce después; su exclusión temporal manda sobre desempeño.
+**¿Qué pasa con un reclamo que tarda exactamente 72 h?** Cumple, porque el caso dice «superar».
 
-**¿Por qué no Random Forest o boosting?** No se piden; priorizamos todas las secciones obligatorias. No hay desempeño mínimo.
+**¿Por qué no usar la encuesta si predice tan bien?** Porque se responde después del cierre. Manda la disponibilidad.
 
-**¿Por qué reservar test si ya hay CV?** CV sirve para elegir y comparar; test estima la elección con reclamos no usados para esa selección. No elimina todos los sesgos del caso.
+**¿Por qué dividiste las distancias por 1000 y no las borraste?** Porque divididas caen justo en el rango de su departamento. Borrarlas tiraba información correcta.
 
-**¿Por qué no class_weight='balanced'?** Queremos probabilidades de la prevalencia original para aplicar costos sin una corrección adicional; recall se modifica con umbral, no necesariamente alterando entrenamiento.
+**¿Por qué mediana y no media para imputar conexiones?** Porque tiene cola: media 44, mediana 27. La media queda arrastrada por los valores grandes.
 
-**¿Por qué mejora AUC pero casi no accuracy a 0,5?** AUC usa ordenamiento de todas las probabilidades; accuracy usa una decisión puntual. La mayoría de los riesgos no llega a 50%.
+**¿Por qué no `class_weight="balanced"`?** Porque cambia las probabilidades y el umbral de costos ya no se podría aplicar directo. El recall se ajusta con el umbral.
 
-**¿Qué entendemos por reproducible?** Rutas centralizadas, datos originales y hashes, semilla fija, dependencias, ingesta y unión visibles, pipeline y notebook ejecutable desde un kernel limpio.
+**¿Por qué el AUC es bueno pero el recall a 0,5 es malo?** El AUC mira el orden de todas las probabilidades; el recall a 0,5 depende de un solo corte, y casi ningún reclamo llega al 50 %.
 
-**¿Qué aprendió el trabajo?** Que prevenir fuga y elegir política por costos puede importar más que perseguir una métrica alta. También que es válido concluir que una tarea aporta poco si lo demostramos.
+**¿Para qué la prueba reservada si ya hay validación cruzada?** La validación cruzada se usó para elegir (λ, k, profundidad, regresor). La prueba mide esa elección con reclamos que no participaron.
 
-## Qué revisar entre los cuatro antes de entregar
+**¿Por qué no Random Forest o boosting?** La consigna no los pide y no suman puntos.
 
-1. Cada integrante debe explicar cómo se construye la etiqueta y por qué se excluye información futura.
-2. Rehacer a mano la cuenta de USD 22,84 y explicar por qué accuracy baja cuando cambia el umbral.
-3. Leer sección 12 y distinguir estimación histórica, datos didácticos, proyección anual y efecto causal.
-4. Abrir el notebook ejecutado y comprobar que estas cifras aparecen en sus salidas. Entregar por Moodle: GitHub no sustituye esa entrega.
+## Antes de entregar
+
+1. Que cada uno pueda explicar cómo se construye la etiqueta y por qué se excluye la información del cierre.
+2. Rehacer a mano la cuenta de USD 22,91.
+3. Explicar con la tabla de la sección 10 por qué k vecinos cambia y el árbol no.
+4. Abrir el notebook y comprobar que estas cifras aparecen en las salidas.
+5. Entregar por Moodle: GitHub no reemplaza la entrega.
 
 ## Fuentes
 
-- Consigna del grupo: `consigna-proyecto-reclamos-ose.pdf` (incluida junto al notebook).
-- [Repositorio de la cátedra UCU](https://github.com/ucudal/Machine-Learning---Ingenieria-en-IA-y-CD): complemento y condiciones de uso del material; entrega por Moodle.
-- [Datos y metadatos oficiales de OSE](https://datos.ose.com.uy/dataset/reclamos-operativos).
-- [scikit-learn: preparación y leakage](https://scikit-learn.org/stable/common_pitfalls.html).
-- [scikit-learn: validación cruzada](https://scikit-learn.org/stable/modules/cross_validation.html).
+- Consigna: `consigna-proyecto-reclamos-ose.pdf`.
+- [Repositorio de la cátedra UCU](https://github.com/ucudal/Machine-Learning---Ingenieria-en-IA-y-CD).
+- [Datos y metadatos de OSE](https://datos.ose.com.uy/dataset/reclamos-operativos).
+- [scikit-learn: errores comunes y leakage](https://scikit-learn.org/stable/common_pitfalls.html).

@@ -32,12 +32,18 @@ El trabajo integra problemas de **regresión** y **clasificación**, desde la ex
 - [Template oficial](entrega_reclamos_ose_template.ipynb)
 - [Guía para defender decisiones y resultados](GUIA_DEFENSA.md)
 - [Instrucciones de ejecución y alcance](README_ENTREGA.md)
-- [Resultados exportados](resultados/)
-- [Paquete completo para la entrega](OSE_entrega_completa.zip)
 
 ## Reproducir el análisis
 
-Se verificó con Python 3.12. Desde la raíz del repo, en PowerShell:
+Se verificó con Python 3.12. Desde la raíz del repo, en macOS o Linux:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python ejecutar_notebook.py
+```
+
+En Windows (PowerShell):
 
 ```powershell
 python -m venv .venv
@@ -45,22 +51,21 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -X utf8 ejecutar_notebook.py
 ```
 
-El ejecutor extrae automáticamente el CSV de OSE desde `data/ose_2024.zip` y ejecuta el notebook desde un kernel nuevo. El CSV de 114 MB queda excluido de Git; su ZIP oficial sí está versionado. Para abrir el notebook en Jupyter o VS Code, ejecutar antes `python preparar_datos.py` y seleccionar el entorno instalado.
+El ejecutor extrae el CSV de OSE desde `data/ose_2024.zip` y corre el notebook desde un kernel nuevo. El CSV de 114 MB queda fuera de Git; su ZIP oficial sí está versionado. Para abrir el notebook en Jupyter o VS Code, correr antes `python preparar_datos.py` y elegir como kernel el entorno `.venv`.
 
 ## Resultados principales
 
-- Unión validada de 3.964 reclamos del complemento; conjunto válido final de 3.604 después de resolver copias y objetivos imposibles.
-- Cinco folds, clasificación estratificada y test reservado de 721 reclamos.
-- Logística honesta: AUC de validación 0,770 ± 0,027.
-- Umbral económico: 45 / (45 + 270) = 14,29 %.
-- En test, esa política detecta 92 de 116 incumplimientos y cuesta USD 22,84 por reclamo, frente a USD 38,57 con umbral 0,5, según los costos del ejercicio.
-- La regresión de horas ofrece mejoras limitadas; la cola del tiempo genera mucha variabilidad entre folds.
+- La unión conserva los 3.964 reclamos del complemento. Tras quitar 32 copias y 331 tiempos negativos quedan 3.604 reclamos válidos, con un 16,1 % de incumplimientos.
+- Validación cruzada de cinco folds (estratificada en clasificación) y una prueba reservada de 721 reclamos que se usa una sola vez.
+- Tiempo de resolución: la mejora sobre predecir la media es chica. Lasso queda en un MAE de 80,2 h contra 82,9 h de la base, y el error está dominado por unos pocos reclamos muy largos.
+- Priorización: la regresión logística logra un AUC de 0,771 ± 0,028. La fuga de información inflaría ese valor a 0,974.
+- Con el umbral derivado de los costos (45 / (45 + 270) = 0,143), en la prueba reservada se detectan 92 de 116 incumplimientos y el costo baja a USD 22,91 por reclamo, contra USD 43,44 sin priorizar: unos USD 8,0 millones al año sobre 390.000 reclamos.
 
 Distancia, conexiones afectadas y calificación de atención son columnas construidas por la cátedra con fines didácticos. Los resultados **no constituyen un diagnóstico de la gestión de OSE**. Los costos anuales son proyecciones bajo los supuestos del caso, no ahorro causal demostrado ni presupuesto operativo completo.
 
 ## Estado
 
-Las 13 secciones están completas sobre el template oficial, con el notebook ejecutado y resultados visibles. Se incluyen la guía de defensa, los datos comprimidos y las dependencias para reproducirlo. La entrega de la cátedra se realiza por **Moodle**; subir el repo no sustituye esa entrega.
+Las 13 secciones están completas sobre la plantilla oficial, con el notebook ejecutado de punta a punta y todas las salidas visibles. Se incluyen la guía de defensa, los datos comprimidos y las dependencias para reproducirlo. La entrega de la cátedra se realiza por **Moodle**; subir el repo no sustituye esa entrega.
 
 ## Autores
 
