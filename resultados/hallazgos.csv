@@ -1,0 +1,12 @@
+defecto / hallazgo,evidencia,decisión propuesta
+Unión y claves,"390,886 filas OSE; 3,964 complemento; 3,964 unidas; 0 ID sin match; ID únicos",Unión uno a uno validada
+Repeticiones salvo ID,32 copias; tabla de ejemplos anterior,Quitar copias antes de particionar; reconocer posible coincidencia real
+Objetivo negativo,331 tiempos negativos; 10 con -1,No imputar ni etiquetar como no incumplimiento; excluir
+Unidades del objetivo,Metadatos: minutos; plazo del caso: horas,Dividir por 60 antes de etiquetar
+Distancia imposible,"21 casos fuera de [0,1000] km; máximo 87,510",Invalidar valor e imputar dentro del pipeline
+Conexiones faltantes,255 (6.43%); contrastes anteriores,Mediana + indicador; reconocer mecanismo no identificado
+Encuesta faltante y tardía,464 (11.71%); tomada tras cierre según consigna,Excluir por tiempo de disponibilidad
+Cola derecha del tiempo,Asimetría 16.48; máximo 8731.13 h; gráfico anterior,Conservar extremos válidos; comparar ajuste directo y log
+Región redundante,Máximo de regiones por departamento: 1,Conservar departamento; excluir región
+Fechas y campos de cierre,1900/-1/SIN DATOS según metadatos; conteos normalizados anteriores,Normalizar centinelas; no usar para decidir al ingreso
+Desbalance,Prevalencia de incumplimiento: 16.09%,CV estratificada; métricas de minoritaria y costos

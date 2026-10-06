@@ -1,0 +1,9 @@
+hoja,regla,reclamos,incumplen,tasa_incumplimiento,prevalencia_general,diferencia_pp,razon_vs_prevalencia,accion_por_costo
+3,situación de agua no es «CON AGUA» Y distancia desde el centro (km) ≤ 5.580 Y hora de ingreso ≤ 14.825,253,1,0.003952569169960474,0.16094346167186957,-15.699089250190909,0.02455874335559493,Cola normal
+4,situación de agua no es «CON AGUA» Y distancia desde el centro (km) ≤ 5.580 Y hora de ingreso > 14.825,60,2,0.03333333333333333,0.16094346167186957,-12.761012833853624,0.20711206896551726,Cola normal
+6,situación de agua no es «CON AGUA» Y distancia desde el centro (km) > 5.580 Y departamento no es «MONTEVIDEO»,547,15,0.027422303473491772,0.16094346167186957,-13.35211581983778,0.17038470024585514,Cola normal
+7,situación de agua no es «CON AGUA» Y distancia desde el centro (km) > 5.580 Y departamento es «MONTEVIDEO»,228,26,0.11403508771929824,0.16094346167186957,-4.690837395257133,0.7085412885662432,Cola normal
+10,"situación de agua es «CON AGUA» Y departamento no es «MONTEVIDEO» Y día de semana (0=lunes, 6=domingo) no es «4»",887,127,0.14317925591882752,0.16094346167186957,-1.776420575304205,0.8896245577887495,Priorizar
+11,"situación de agua es «CON AGUA» Y departamento no es «MONTEVIDEO» Y día de semana (0=lunes, 6=domingo) es «4»",184,60,0.32608695652173914,0.16094346167186957,16.51434948498696,2.0260963268365817,Priorizar
+13,situación de agua es «CON AGUA» Y departamento es «MONTEVIDEO» Y distancia desde el centro (km) ≤ 8.085,334,48,0.1437125748502994,0.16094346167186957,-1.7230886821570173,0.8929382614082181,Priorizar
+14,situación de agua es «CON AGUA» Y departamento es «MONTEVIDEO» Y distancia desde el centro (km) > 8.085,390,185,0.47435897435897434,0.16094346167186957,31.341551268710475,2.9473640583554377,Priorizar
