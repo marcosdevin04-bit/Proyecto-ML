@@ -74,4 +74,4 @@ Las 13 secciones están completas sobre la plantilla oficial, con el notebook ej
 - Santiago Alba
 - Domingo Leiva
 
-Estudiantes de Ingeniería en Inteligencia Artificial y Ciencia de Datos en la Universidad Católica del Uruguay.
+Estudiantes de Ingeniería en Inteligencia Artificial y Ciencia de Datos en la Universidad Católica del Uruguay
